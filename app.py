@@ -4,9 +4,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error, r2_score
 
 st.set_page_config(page_title="Stock Analysis & Prediction", layout="wide")
 st.title("📈 Stock Analysis and Prediction App (Educational)")
@@ -24,11 +22,9 @@ def load_data(ticker, start, end):
         df = yf.download(ticker, start=start, end=end)
         return df
     except Exception:
-        # return empty df if download fails
         return pd.DataFrame()
 
 def safe_line_chart(df, cols, title=None):
-    # Utility to avoid KeyError: show warning if cols missing
     missing = [c for c in cols if c not in df.columns]
     if missing:
         st.warning(f"Missing columns for chart: {missing}. Chart skipped.")
@@ -51,20 +47,29 @@ if fetch:
             st.subheader(f"Raw data (last 5 rows) — {ticker.upper()}")
             st.dataframe(df.tail())
 
+            # --- Fix: handle Close vs Adj Close ---
+            if "Close" in df.columns:
+                df['Target'] = df['Close']
+            elif "Adj Close" in df.columns:
+                df['Target'] = df['Adj Close']
+            else:
+                st.error("Neither Close nor Adj Close column found in data.")
+                st.stop()
+
             # --- compute moving averages BEFORE plotting ---
-            df['MA50'] = df['Close'].rolling(window=50).mean()
-            df['MA200'] = df['Close'].rolling(window=200).mean()
+            df['MA50'] = df['Target'].rolling(window=50).mean()
+            df['MA200'] = df['Target'].rolling(window=200).mean()
 
             st.subheader(f"Stock Closing Price for {ticker.upper()}")
-            safe_line_chart(df, ['Close'])
+            safe_line_chart(df, ['Target'])
 
             st.subheader("Stock Price with Moving Averages (50 & 200-day)")
-            safe_line_chart(df, ['Close', 'MA50', 'MA200'])
+            safe_line_chart(df, ['Target', 'MA50', 'MA200'])
 
             # Feature engineering (simple lag features)
-            data = df[['Close']].copy()
-            data['Lag1'] = data['Close'].shift(1)   # close at t-1
-            data['Lag2'] = data['Close'].shift(2)   # close at t-2
+            data = df[['Target']].copy()
+            data['Lag1'] = data['Target'].shift(1)
+            data['Lag2'] = data['Target'].shift(2)
             data = data.dropna()
 
             if data.shape[0] < 10:
@@ -72,16 +77,20 @@ if fetch:
 
             # Prepare X/y
             X = data[['Lag1', 'Lag2']].values
-            y = data['Close'].values
+            y = data['Target'].values
 
-            # Train/test split (time-respecting)
             try:
                 model = LinearRegression()
                 model.fit(X, y)
-                df['Prediction'] = model.predict(X)
+                df['Prediction'] = model.predict(
+                    pd.DataFrame({
+                        'Lag1': df['Target'].shift(1),
+                        'Lag2': df['Target'].shift(2)
+                    }).fillna(0)
+                )
 
                 st.subheader("Prediction Results")
-                st.line_chart(df[['Close', 'Prediction']])
+                safe_line_chart(df, ['Target', 'Prediction'])
 
             except Exception as e:
                 st.error(f"⚠️ An error occurred: {e}")
