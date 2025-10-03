@@ -78,6 +78,14 @@ if fetch:
 
             # Train/test split (time-respecting)
             try:
-                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
-                model = LinearRegression()
+    model = LinearRegression()
+    model.fit(X, y)
+    df['Prediction'] = model.predict(X)
+
+    st.subheader("Prediction Results")
+    st.line_chart(df[['Close', 'Prediction']])
+
+except Exception as e:
+    st.error(f"⚠️ An error occurred: {e}")
+
 
