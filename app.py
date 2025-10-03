@@ -23,7 +23,7 @@ def load_data(ticker, start, end):
     try:
         df = yf.download(ticker, start=start, end=end)
         return df
-    except Exception as e:
+    except Exception:
         # return empty df if download fails
         return pd.DataFrame()
 
@@ -33,7 +33,6 @@ def safe_line_chart(df, cols, title=None):
     if missing:
         st.warning(f"Missing columns for chart: {missing}. Chart skipped.")
         return
-    # drop NA rows for chart (to avoid plotting NaNs)
     plot_df = df[cols].dropna()
     if plot_df.empty:
         st.warning("Not enough non-NaN rows to plot chart.")
@@ -53,7 +52,6 @@ if fetch:
             st.dataframe(df.tail())
 
             # --- compute moving averages BEFORE plotting ---
-            # these create NaN at the start (normal). We will dropna when plotting if needed.
             df['MA50'] = df['Close'].rolling(window=50).mean()
             df['MA200'] = df['Close'].rolling(window=200).mean()
 
@@ -73,19 +71,17 @@ if fetch:
                 st.warning("Very few rows available after creating features; model may be poor.")
 
             # Prepare X/y
-            X = data[['Lag1','Lag2']].values
+            X = data[['Lag1', 'Lag2']].values
             y = data['Close'].values
 
             # Train/test split (time-respecting)
             try:
-    model = LinearRegression()
-    model.fit(X, y)
-    df['Prediction'] = model.predict(X)
+                model = LinearRegression()
+                model.fit(X, y)
+                df['Prediction'] = model.predict(X)
 
-    st.subheader("Prediction Results")
-    st.line_chart(df[['Close', 'Prediction']])
+                st.subheader("Prediction Results")
+                st.line_chart(df[['Close', 'Prediction']])
 
-except Exception as e:
-    st.error(f"⚠️ An error occurred: {e}")
-
-
+            except Exception as e:
+                st.error(f"⚠️ An error occurred: {e}")
