@@ -20,9 +20,25 @@ with st.sidebar:
 
 @st.cache_data(ttl=3600)
 def load_data(ticker, start, end):
-    # download using yfinance
-    df = yf.download(ticker, start=start, end=end)
-    return df
+    try:
+        df = yf.download(ticker, start=start, end=end)
+        return df
+    except Exception as e:
+        # return empty df if download fails
+        return pd.DataFrame()
+
+def safe_line_chart(df, cols, title=None):
+    # Utility to avoid KeyError: show warning if cols missing
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        st.warning(f"Missing columns for chart: {missing}. Chart skipped.")
+        return
+    # drop NA rows for chart (to avoid plotting NaNs)
+    plot_df = df[cols].dropna()
+    if plot_df.empty:
+        st.warning("Not enough non-NaN rows to plot chart.")
+    else:
+        st.line_chart(plot_df)
 
 if fetch:
     if start_date >= end_date:
@@ -30,63 +46,37 @@ if fetch:
     else:
         df = load_data(ticker, start_date, end_date)
 
-        # check we got data
         if df is None or df.empty:
-            st.error("No data found for that ticker or date range. Try different inputs.")
+            st.error("No data found for that ticker / date range. Try another symbol or range.")
         else:
-            st.subheader(f"Raw data (last 5 rows) — {ticker}")
+            st.subheader(f"Raw data (last 5 rows) — {ticker.upper()}")
             st.dataframe(df.tail())
 
-            # ---------- IMPORTANT FIX: compute MA50 BEFORE plotting ----------
+            # --- compute moving averages BEFORE plotting ---
+            # these create NaN at the start (normal). We will dropna when plotting if needed.
             df['MA50'] = df['Close'].rolling(window=50).mean()
-            # ------------------------------------------------------------------
+            df['MA200'] = df['Close'].rolling(window=200).mean()
 
-            st.subheader(f"Stock Closing Price for {ticker}")
-            st.line_chart(df['Close'])
+            st.subheader(f"Stock Closing Price for {ticker.upper()}")
+            safe_line_chart(df, ['Close'])
 
-            st.subheader("Stock Price with 50-Day Moving Average")
-            # the MA50 column now exists; safe to plot
-            st.line_chart(df[['Close', 'MA50']])
+            st.subheader("Stock Price with Moving Averages (50 & 200-day)")
+            safe_line_chart(df, ['Close', 'MA50', 'MA200'])
 
-            # --- Feature engineering for basic next-day prediction ---
+            # Feature engineering (simple lag features)
             data = df[['Close']].copy()
-            data['Lag1'] = data['Close'].shift(1)  # close at t-1 for predicting t
-            data['Lag2'] = data['Close'].shift(2)  # close at t-2
+            data['Lag1'] = data['Close'].shift(1)   # close at t-1
+            data['Lag2'] = data['Close'].shift(2)   # close at t-2
             data = data.dropna()
 
-            if len(data) < 10:
-                st.warning("Only a small number of rows available after feature creation. Model quality may be poor.")
+            if data.shape[0] < 10:
+                st.warning("Very few rows available after creating features; model may be poor.")
 
-            X = data[['Lag1', 'Lag2']].values
+            # Prepare X/y
+            X = data[['Lag1','Lag2']].values
             y = data['Close'].values
 
-            # time-series split (no shuffle)
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
-            model = LinearRegression()
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-
-            mse = mean_squared_error(y_test, y_pred)
-            r2 = r2_score(y_test, y_pred)
-
-            st.subheader("Model Performance (test set)")
-            st.write(f"MSE: {mse:.4f}")
-            st.write(f"R² Score: {r2:.4f}")
-
-            # plot actual vs predicted
-            st.subheader("Actual vs Predicted (test set)")
-            fig, ax = plt.subplots(figsize=(10, 4))
-            ax.plot(y_test, label='Actual')
-            ax.plot(y_pred, label='Predicted')
-            ax.legend()
-            st.pyplot(fig)
-
-            # --- Next-day prediction (use Close_t and Close_{t-1} as features) ---
-            # For predicting t+1 we need Lag1 = Close_t and Lag2 = Close_{t-1}
-            if len(df) >= 3:
-                last_close = df['Close'].iloc[-1]        # Close_t
-                prev_close = df['Close'].iloc[-2]        # Close_{t-1}
-                next_pred = model.predict(np.array([[last_close, prev_close]]))[0]
-                st.success(f"Predicted next-day close for {ticker}: {next_pred:.2f}")
-            else:
-                st.warning("Not enough rows to produce next-day prediction (need at least 3 rows).")
+            # Train/test split (time-respecting)
+            try:
+                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+                model = LinearRegression(
