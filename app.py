@@ -14,7 +14,8 @@ with st.sidebar:
     ticker = st.text_input("Enter Stock Symbol (e.g. AAPL, TSLA, INFY.NS)", "AAPL")
     start_date = st.date_input("Start Date", value=pd.to_datetime("2020-01-01"))
     end_date = st.date_input("End Date", value=pd.to_datetime("2023-01-01"))
-    fetch = st.button("Fetch Data")
+    future_days = st.slider("Days to Forecast", 1, 30, 7)   # forecast horizon
+    fetch = st.button("Fetch & Predict")
 
 # ---------------- Load Data ----------------
 @st.cache_data(ttl=3600)
@@ -92,12 +93,39 @@ if fetch:
                     model.fit(X, y)
                     data["Prediction"] = model.predict(X)
 
-                    st.subheader("Prediction Results")
+                    st.subheader("Prediction Results (on historical data)")
                     st.line_chart(data[["Target", "Prediction"]])
 
                     # Metrics
                     r2 = model.score(X, y)
                     st.write(f"🔹 R² Score: {r2:.4f}")
+
+                    # ---------------- Future Forecast ----------------
+                    st.subheader(f"🔮 Forecast for Next {future_days} Days")
+
+                    # Start from last two known values
+                    last_lag1 = data["Target"].iloc[-1]
+                    last_lag2 = data["Target"].iloc[-2]
+
+                    future_preds = []
+                    future_dates = pd.date_range(start=df.index[-1] + pd.Timedelta(days=1), periods=future_days, freq="B")
+
+                    for d in range(future_days):
+                        X_future = np.array([[last_lag1, last_lag2]])
+                        y_future = model.predict(X_future)[0]
+                        future_preds.append(y_future)
+
+                        # Shift lags for next prediction
+                        last_lag2 = last_lag1
+                        last_lag1 = y_future
+
+                    forecast_df = pd.DataFrame({"Date": future_dates, "Forecast": future_preds})
+                    forecast_df = forecast_df.set_index("Date")
+
+                    st.line_chart(forecast_df)
+
+                    st.write("📅 Forecasted Prices:")
+                    st.dataframe(forecast_df)
 
                 except Exception as e:
                     st.error(f"⚠️ Error in prediction: {e}")
